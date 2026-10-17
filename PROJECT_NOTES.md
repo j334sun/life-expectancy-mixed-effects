@@ -28,9 +28,13 @@ The cross-validation uses row-level folds. Country-level effects can therefore b
 - Checked README file links and verified the copied CSV and PDF against the originals with SHA-256 hashes.
 - Did not run the full iterative model fitting, cross-validation, or a complete HTML/PDF render.
 
-## Publication details to confirm
+## Attribution and publication status
 
-The author confirmed that this project was completed independently by Jialu Sun; the README reflects that attribution. The user supplied the GitHub profile `https://github.com/j334sun`; the proposed repository name is `life-expectancy-mixed-effects`. The GitHub repository is private. Confirm the dataset's download source and reuse terms before making it public.
+The author confirmed that this project was completed independently by Jialu Sun; the README reflects that attribution. The repository belongs to `j334sun` and remains private pending the author's visibility choice.
+
+The author identified [Life Expectancy (WHO) Fixed on Kaggle](https://www.kaggle.com/datasets/lashagoch/life-expectancy-who-updated) by Lasha (@lashagoch) as the likely dataset source. Checked on October 16, 2026: the listing's filename, displayed size (307.57 kB), 2,864 rows, 21 columns, 179 countries, and 2000–2015 coverage match the local CSV. Kaggle displays **CC0: Public Domain**, linking to https://creativecommons.org/publicdomain/zero/1.0/. A fresh-download byte comparison has not been performed.
+
+The source explains that missing values were filled with nearby three-year averages or regional averages. The README now credits the source and notes this upstream imputation. No license has been selected for the project's code or report.
 
 ## GitHub repository
 

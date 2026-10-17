@@ -65,7 +65,11 @@ Package versions were not locked in the original project. Random seeds are set i
 
 **Author: [Jialu Sun](https://github.com/j334sun).** This project was completed independently, including the data analysis and model comparison.
 
-The dataset is retained from the original course-project folder. Its original download URL and reuse terms were not recorded in the files reviewed and still need to be confirmed before public distribution.
+**Dataset:** [Life Expectancy (WHO) Fixed](https://www.kaggle.com/datasets/lashagoch/life-expectancy-who-updated), published on Kaggle by [Lasha (@lashagoch)](https://www.kaggle.com/lashagoch). Kaggle lists it under [CC0 1.0: Public Domain](https://creativecommons.org/publicdomain/zero/1.0/). This is the updated dataset, distinct from the earlier WHO dataset on Kaggle.
+
+The file name, displayed size (307.57 kB), 2,864 rows, 21 columns, 179 countries, and 2000–2015 coverage match the local project dataset. The project author identified this as the likely original download source; a byte-for-byte comparison with a fresh download has not been performed.
+
+The provider credits WHO, World Bank, and Our World in Data sources. Missing values were filled using nearby three-year averages or regional averages before this analysis. This upstream imputation is a limitation when interpreting the results. The dataset's CC0 designation does not license this project's code or report.
 
 The project folder included these methodological references:
 
