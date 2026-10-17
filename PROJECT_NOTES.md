@@ -30,7 +30,7 @@ The cross-validation uses row-level folds. Country-level effects can therefore b
 
 ## Attribution and publication status
 
-The author confirmed that this project was completed independently by Jialu Sun; the README reflects that attribution. The repository belongs to `j334sun` and remains private pending the author's visibility choice.
+The author confirmed that this project was completed independently by Jialu Sun; the README reflects that attribution. The repository belongs to `j334sun` and was made public on October 16, 2026 at the author's request.
 
 The author identified [Life Expectancy (WHO) Fixed on Kaggle](https://www.kaggle.com/datasets/lashagoch/life-expectancy-who-updated) by Lasha (@lashagoch) as the likely dataset source. Checked on October 16, 2026: the listing's filename, displayed size (307.57 kB), 2,864 rows, 21 columns, 179 countries, and 2000–2015 coverage match the local CSV. Kaggle displays **CC0: Public Domain**, linking to https://creativecommons.org/publicdomain/zero/1.0/. A fresh-download byte comparison has not been performed.
 
