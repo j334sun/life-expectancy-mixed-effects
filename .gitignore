@@ -1,0 +1,15 @@
+.DS_Store
+.Rhistory
+.Rapp.history
+.RData
+.Ruserdata
+.Rproj.user/
+.Renviron
+.env
+.env.*
+!.env.example
+analysis.html
+analysis.pdf
+analysis.tex
+analysis_files/
+analysis_cache/

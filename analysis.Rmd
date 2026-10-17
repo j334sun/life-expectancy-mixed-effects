@@ -1,0 +1,980 @@
+---
+title: "Life Expectancy: Comparing Mixed-Effects Models"
+author: "Jialu Sun"
+date: "2025-03-12"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# library
+```{r}
+# install.packages("party")
+# install.packages("rpart") 
+# install.packages("nlme")
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(lattice)
+library(car)
+library(geepack)
+library(rpart)
+library(nlme)
+library(caret)
+library(randomForest)
+library(randomForestExplainer)
+library(mgcv)
+library(lme4)
+```
+
+
+# 1. Data loading and cleaning
+```{r}
+# reading the dataset - the fixed one
+life = read.csv("Life-Expectancy-Data-Updated.csv")
+
+#frequency table for year and country
+year_frequency = table(life$Year)
+country_frequency = table(life$Country)
+
+year_frequency
+#country_frequency
+```
+
+- This is a balanced data - every subject(country) gets the same number of observations
+
+
+## 1.1 checking multicollinearity
+```{r}
+life_no_country <- life %>% select(-Country, -Economy_status_Developing) #get rid of economy status developing because it's the opposite indicator of developed 
+    # plot(life_2015_mod)
+model_multi <- lm(Life_expectancy ~ ., data = life_no_country)
+vif_values <- vif(model_multi)
+print(vif_values)
+```
+
+
+There might be multicolinearity issue with some variables:
+
+- Infant_deaths
+
+- Under_five_deaths
+
+- Thinness_ten_nineteen_years
+
+- Thinness_five_nine_years
+
+- Polio and Diphtheria - measurement of if they got the vaccine
+
+Take out infant_deaths
+
+
+They are super highly correlated 
+```{r}
+cor(life_no_country$Infant_deaths, life_no_country$Under_five_deaths)
+```
+```{r}
+cor(life_no_country$Polio, life_no_country$Diphtheria)
+```
+
+```{r}
+cor(life_no_country$Thinness_ten_nineteen_years, life_no_country$Thinness_five_nine_years)
+```
+
+```{r}
+life_mod = life %>% select(- Infant_deaths, -Under_five_deaths, -Adult_mortality, - Thinness_five_nine_years, -Diphtheria)
+```
+
+## 1.2 modifying the region Africa
+```{r}
+countries <- c("Algeria", "Egypt", "Libya", "Morocco", "Tunisia")
+
+# Modify the "Region" column
+life_mod <- life_mod%>%
+  mutate(Region = ifelse(Country %in% countries, "Rest of Africa", Region))
+
+life_mod <- life_mod %>%
+  mutate(Region = ifelse(Region == "Africa", "Sub-Saharan Africa", Region))
+
+table(life_mod$Region)
+```
+
+# 2. EDA
+## 2.1 Response variable 
+
+### Global average life expectancy over years
+```{r}
+summary_data <- life_mod %>%
+  group_by(Year) %>%
+  summarise(
+    Avg_Life_Expectancy = mean(Life_expectancy),
+    Q25_Life_Expectancy = quantile(Life_expectancy, 0.25),
+    Q75_Life_Expectancy = quantile(Life_expectancy, 0.75)
+  )
+
+ggplot(summary_data, aes(x = Year)) +
+  geom_line(aes(y = Avg_Life_Expectancy, color = "Average Life Expectancy"), size = 1) +  # Average life expectancy 
+  geom_errorbar(aes(ymin = Q25_Life_Expectancy, ymax = Q75_Life_Expectancy, color = "Quantile Range"), 
+                width = 0.2) +  # Error bars 
+  geom_point(aes(y = Avg_Life_Expectancy, color = "Average Life Expectancy"), size = 2) +  
+  scale_color_manual(values = c("Average Life Expectancy" = "blue", "Quantile Range" = "black")) +  
+  labs(title = "Average Life Expectancy Over Years with 25th and 75th Quantiles",
+       x = "Year",
+       y = "Life Expectancy",
+       color = "") +  
+  theme_minimal() 
+```
+
+## 2.2 Some univaraite analysis of important variables
+### Region
+```{r by-region-by-year}
+avg_life_expectancy <- life %>%
+  group_by(Year, Region) %>%
+  summarise(Average_Life_Expectancy = mean(Life_expectancy, na.rm = TRUE), .groups = "drop")
+
+ggplot(avg_life_expectancy, aes(x = Year, y = Average_Life_Expectancy, color = Region, group = Region)) +
+  geom_line(size = 1) +
+  labs(title = "Average Life Expectancy by Region Across Years",
+       x = "Year",
+       y = "Average Life Expectancy",
+       color = "Region") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        legend.text = element_text(size = 7),  # Adjust the size as needed
+        legend.title = element_text(size = 10),
+        plot.title = element_text(size = 14, hjust = 0.5), 
+        axis.title = element_text(size = 12))
+```
+- We can clearly see that different region has different life expectancy, with sub-saharan africa region being a far outlier. We also observe that the rate of increase for SSA region is a lot faster than other countries in the recent years. 
+
+```{r life-2015-mod}
+life_2015 = life_mod[life_mod$Year == "2015", ]
+
+life_2015 <- life_2015 %>%
+  mutate(Economy_status_Developed = as.factor(Economy_status_Developed))
+
+life_2015_mod <- life_2015 %>% select(-Year, -Country, -Economy_status_Developing)
+```
+
+```{r latest-year-region-boxplot}
+region_order <- life_2015_mod %>%
+  group_by(Region) %>%
+  summarise(mean_life_expectancy = mean(Life_expectancy, na.rm = TRUE)) %>%
+  arrange(desc(mean_life_expectancy))  # Use `arrange()` for descending order
+
+# Convert Region to a factor ordered by mean life expectancy
+life_2015_mod <- life_2015_mod %>%
+  mutate(Region = factor(Region, levels = region_order$Region))
+
+# Create the boxplot
+ggplot(life_2015_mod, aes(x = Region, y = Life_expectancy)) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(title = "Life Expectancy Across Different Regions",
+       x = "Region",
+       y = "Life Expectancy") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+- Even if between region there are big differences, per region boxplot is still quite wide, meaning the countries within a region is not very homogeneous. 
+
+- This suggest we should keep country as ID. 
+
+### By development status 
+```{r}
+# Create the box pl
+ggplot(life_2015_mod, aes(x = Economy_status_Developed, y = Life_expectancy)) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(title = "Life Expectancy by Economy Status",
+       x = "Economy Status",
+       y = "Life Expectancy") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Ensure labels are readable
+
+```
+
+
+Choice of predictors to include in the model: 
+```{r}
+life_final = life_mod %>% select(- Economy_status_Developed)
+colnames(life_final)
+```
+- Country is the ID, the rest are the explanatory variables 
+
+```{r}
+head(life_final)
+```
+
+# 3. Fitting Model - Entire Dataset
+## 3.0 Pre-LME
+### Most regular linear regression model
+```{r lm-fitting}
+lin_mod = lm(Life_expectancy ~ Year + Region + Alcohol_consumption + Hepatitis_B + Measles + BMI + Polio + 
+                                   Incidents_HIV + GDP_per_capita + Population_mln + Thinness_ten_nineteen_years + 
+                                   Schooling + Economy_status_Developing, 
+               data = life_final)
+summary(lin_mod)
+```
+
+```{r lm-model-diag}
+# residual vs. fitted
+plot(lin_mod$fitted.values, residuals(lin_mod), 
+     main = "Residuals vs Fitted", 
+     xlab = "Fitted Values", 
+     ylab = "Residuals")
+abline(h = 0, col = "red")
+
+# qq Plot 
+qqnorm(residuals(lin_mod))
+qqline(residuals(lin_mod), col = "red")
+```
+- From the fitted vs. residual plot, seems like there's some fanning pattern - the residuals show more variance for countries (* year) with lower life expectancy. This suggest that maybe we should allow different countries to have different intercept/slope to capture those variances. 
+
+### GEE model
+```{r, eval = FALSE}
+gee <- geeglm(Life_expectancy ~ Year + Region + Alcohol_consumption + Hepatitis_B + Measles + BMI + Polio + 
+                                    Incidents_HIV + GDP_per_capita + Population_mln + Thinness_ten_nineteen_years + 
+                                    Schooling + Economy_status_Developing, 
+                     id = Country, 
+                     data = life_final, 
+                     corstr = "exchangeable", 
+                     family = gaussian)
+summary(gee)
+```
+
+
+## 3.1 Fit LME model
+### random intercept model
+```{r}
+library(nlme)
+lme_int <- lme(fixed = Life_expectancy ~ Year + Region + Alcohol_consumption + Hepatitis_B + Measles + BMI + Polio + 
+                                   Incidents_HIV + GDP_per_capita + Population_mln + Thinness_ten_nineteen_years + 
+                                   Schooling + Economy_status_Developing,
+                random = ~ 1 | Country, 
+                data = life_final, na.action = na.omit)
+summary(lme_int)
+```
+
+### randome intercept + slope model
+```{r}
+lme_slope = lme(fixed = Life_expectancy ~ Year + Region + Alcohol_consumption + Hepatitis_B + Measles + BMI + Polio + 
+                                   Incidents_HIV + GDP_per_capita + Population_mln + Thinness_ten_nineteen_years + 
+                                   Schooling + Economy_status_Developing,
+               random = ~ Year | Country, 
+               data = life_final, 
+               na.action = na.omit)
+summary(lme_slope)
+```
+### Comparing 
+```{r compare-the-two-lme-models}
+anova(lme_int,lme_slope)
+```
+- Doing LRT test: it seems that the random slope didn't do that much - it is likely because the slope seems similar between different countries (they all show an upward trend). 
+
+```{r compare-lme-inter-with-gee-and-lin-mod}
+AIC(lin_mod)
+# QIC(gee_model)
+AIC(lme_int)
+```
+- The QIC for GEE model very high, and the AIC for LME model much smaller than lin mod. The best model so far is the LME model with the random intercept, it will be used to compare with MERT and MERF. 
+
+```{r residual-vs-fitted}
+fitted_vals <- fitted(lme_int)
+residual_vals <- residuals(lme_int)
+
+plot_data <- data.frame(
+  Fitted = fitted_vals,
+  Residual = residual_vals
+)
+
+library(ggplot2)
+
+ggplot(plot_data, aes(x = Fitted, y = Residual)) +
+  geom_point(alpha = 0.6) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  labs(
+    title = "Residual vs. Fitted Plot - LME",
+    x = "Predicted Life Expectancy",
+    y = "Residual"
+  ) +
+  theme_minimal()
+```
+
+### 3.2 MERT model
+```{r mert-function-definition}
+MERT <- function(data, response, fixed_effects, cluster, max_iter = 100, tol = 1e-4) {
+  library(nlme)
+  library(rpart)
+  
+  data <- data.frame(data)
+  data$random_effect <- 0
+  prev_logLik <- -Inf
+  GLL_history <- numeric(max_iter)
+  
+  for (iter in 1:max_iter) {
+    cat("Iteration:", iter, "\n")
+    
+    # subtract the random effect previous estimated
+    data$adjusted_response <- data[[response]] - data$random_effect
+    
+    # fit the tree model to the adjusted response
+    tree_formula <- as.formula(paste("adjusted_response ~", paste(fixed_effects, collapse = " + ")))
+    tree_model <- rpart(tree_formula, data = data, method = "anova")
+    # make prediction
+    data$fixed_pred <- predict(tree_model, newdata = data)
+    
+    # take out the fix part of the effect and leave the randome to fit LME
+    data$adjusted_y <- data[[response]] - data$fixed_pred
+    
+    # fit LME
+    lme_model <- tryCatch({
+      lme(adjusted_y ~ 1,
+          random = as.formula(paste("~ 1 |", cluster)),
+          data = data,
+          na.action = na.omit,
+          control = lmeControl(opt = "optim"))
+    }, error = function(e) {
+      cat("LME model failed to converge at iteration", iter, "\n")
+      return(NULL)
+    })
+    
+    if (is.null(lme_model)) break
+    
+    # Update randome effect from new LME model
+    re <- ranef(lme_model)
+    re_vector <- re[as.character(data[[cluster]]), "(Intercept)"]
+    data$random_effect <- re_vector
+    
+    #gll formula
+    sigma2 <- lme_model$sigma^2
+    tau2 <- as.numeric(VarCorr(lme_model)[1, "Variance"])
+    cluster_ids <- unique(data[[cluster]])
+    GLL <- 0
+    for (cid in cluster_ids) {
+      subset <- data[data[[cluster]] == cid, ]
+      y_i <- subset[[response]]
+      f_Xi <- subset$fixed_pred
+      b_i <- unique(subset$random_effect) 
+      Z_i <- matrix(1, nrow = length(y_i), ncol = 1)
+      R_i <- sigma2 * diag(length(y_i))
+      D <- matrix(tau2, 1, 1)
+      
+      resid <- y_i - f_Xi - Z_i %*% b_i
+      term1 <- t(resid) %*% solve(R_i) %*% resid
+      term2 <- t(b_i) %*% solve(D) %*% b_i
+      term3 <- log(det(D))
+      term4 <- log(det(R_i))
+      
+      GLL <- GLL + term1 + term2 + term3 + term4
+    }
+    GLL_history[iter] <- GLL
+    cat("  GLL at iteration", iter, ":", GLL, "\n")
+    
+    # convergence and stopping
+    if (iter > 1 && abs(GLL_history[iter] - GLL_history[iter - 1]) < tol) {
+      cat("  Convergence reached at iteration", iter, "\n")
+      break
+    }
+  }
+  
+  return(list(
+    tree_model = tree_model,
+    lme_model = lme_model,
+    final_data = data,
+    GLL = GLL_history[1:iter]
+  ))
+}
+```
+
+```{r mert-v3-implementation}
+# fixed effect variables
+fixed_vars <- c("Year", "Region", "Alcohol_consumption", "Hepatitis_B", "Measles", "BMI",
+                "Polio", "Incidents_HIV", "GDP_per_capita", "Population_mln",
+                "Thinness_ten_nineteen_years", "Schooling", "Economy_status_Developing")
+
+#on full dataset
+mert_result <- MERT(
+  data = life_final,
+  response = "Life_expectancy",
+  fixed_effects = fixed_vars,
+  cluster = "Country",
+  max_iter = 100
+)
+
+# look at final LME
+summary(mert_result$lme_model)
+```
+```{r mert-visualize}
+library(rpart.plot)
+rpart.plot(mert_result$tree_model,
+           type = 2,      
+           fallen.leaves = TRUE,
+           cex = 1.2,     
+           main = "Regression Tree from MERT")
+```
+
+### 3.2 MERF model
+```{r merf-reconstruct}
+MERF <- function(data, response, fixed_effects, cluster, max_iter = 150, tol = 1e-4, ntree = 100) {
+  library(nlme)
+  library(randomForest)
+  
+  data <- data.frame(data)
+  data$random_effect <- 0
+  GLL_history <- numeric(max_iter)
+  
+  for (iter in 1:max_iter) {
+    cat("Iteration:", iter, "\n")
+    
+    # subtract random effects
+    data$adjusted_response <- data[[response]] - data$random_effect
+    
+    # random forest to adjusted response
+    rf_model <- randomForest(
+      x = data[, fixed_effects],
+      y = data$adjusted_response,
+      ntree = ntree
+    )
+    data$fixed_pred <- predict(rf_model, newdata = data[, fixed_effects])
+    
+    # randome part
+    data$adjusted_y <- data[[response]] - data$fixed_pred
+    
+    # fit on randome part
+    lme_model <- tryCatch({
+      lme(adjusted_y ~ 1,
+          random = as.formula(paste("~ 1 |", cluster)),
+          data = data,
+          na.action = na.omit,
+          control = lmeControl(opt = "optim"))
+    }, error = function(e) {
+      cat("  LME model failed to converge at iteration", iter, "\n")
+      return(NULL)
+    })
+    if (is.null(lme_model)) break
+    
+    # update random effect
+    re <- ranef(lme_model)
+    re_vector <- re[as.character(data[[cluster]]), "(Intercept)"]
+    data$random_effect <- re_vector
+    
+    # gll
+    sigma2 <- lme_model$sigma^2
+    tau2 <- as.numeric(VarCorr(lme_model)[1, "Variance"])
+    cluster_ids <- unique(data[[cluster]])
+    GLL <- 0
+    for (cid in cluster_ids) {
+      subset <- data[data[[cluster]] == cid, ]
+      y_i <- subset[[response]]
+      f_Xi <- subset$fixed_pred
+      b_i <- unique(subset$random_effect)  # scalar
+      Z_i <- matrix(1, nrow = length(y_i), ncol = 1)
+      R_i <- sigma2 * diag(length(y_i))
+      D <- matrix(tau2, 1, 1)
+      
+      resid <- y_i - f_Xi - Z_i %*% b_i
+      term1 <- t(resid) %*% solve(R_i) %*% resid
+      term2 <- t(b_i) %*% solve(D) %*% b_i
+      term3 <- log(det(D))
+      term4 <- log(det(R_i))
+      
+      GLL <- GLL + term1 + term2 + term3 + term4
+    }
+    GLL_history[iter] <- GLL
+    cat("  GLL at iteration", iter, ":", GLL, "\n")
+    
+    # check convergence
+    if (iter > 1 && abs(GLL_history[iter] - GLL_history[iter - 1]) < tol) {
+      cat("  Convergence reached at iteration", iter, "\n")
+      break
+    }
+  }
+  return(list(
+    rf_model = rf_model,
+    lme_model = lme_model,
+    final_data = data,
+    GLL = GLL_history[1:iter]
+  ))
+}
+```
+
+```{r merf-implementation}
+fixed_vars <- c("Year", "Region", "Alcohol_consumption", "Hepatitis_B", "Measles", "BMI",
+                "Polio", "Incidents_HIV", "GDP_per_capita", "Population_mln",
+                "Thinness_ten_nineteen_years", "Schooling", "Economy_status_Developing")
+merf_result <- MERF(
+  data = life_final,
+  response = "Life_expectancy",
+  fixed_effects = fixed_vars,
+  cluster = "Country",
+  max_iter = 150,
+  ntree = 100
+)
+
+summary(merf_result$lme_model)
+```
+
+```{r predicted-vs-residual-mert}
+final_df_merf <- merf_result$final_data
+
+final_df_merf$predicted_LE <- final_df_merf$fixed_pred + final_df_merf$random_effect
+
+final_df_merf$residual <- final_df_merf$Life_expectancy - final_df_merf$predicted_LE
+
+library(ggplot2)
+
+ggplot(final_df_merf, aes(x = predicted_LE, y = residual)) +
+  geom_point(alpha = 0.6) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  labs(
+    title = "Residual vs. Fitted Plot - MERF",
+    x = "Predicted Life Expectancy",
+    y = "Residual"
+  ) +
+  theme_minimal()
+```
+
+# 4. Error Evaluation with 10-fold CV
+## 4.1 On the global dataset
+```{r lin-mod-cv-function}
+cv_linear_model <- function(formula, data, k = 10) {
+  # create k folds
+  set.seed(123)  # For reproducibility
+  folds <- createFolds(data[[all.vars(formula)[1]]], k = k, list = TRUE)
+  
+  # vector to store MSE for each fold
+  mse_values <- numeric(k)
+  
+  # k-fold cross-validation
+  for (i in 1:k) {
+    # training and validation sets
+    training_set <- data[-folds[[i]], ]
+    validation_set <- data[folds[[i]], ]
+    
+    # Fit the linear model on the training set
+    lm_model <- lm(formula, data = training_set)
+    
+    # Predict on the validation set
+    predictions <- predict(lm_model, newdata = validation_set)
+    
+    # Compute mse
+    mse <- mean((validation_set[[all.vars(formula)[1]]] - predictions)^2)
+    mse_values[i] <- mse
+  }
+  
+  # average MSE across all folds
+  cv_mse <- mean(mse_values)
+  return(cv_mse)
+}
+```
+
+```{r linmod-cv-result}
+linmod_cv <- cv_linear_model(Life_expectancy ~ Year + Region + Alcohol_consumption + Hepatitis_B + Measles + BMI + Polio + 
+                                   Incidents_HIV + GDP_per_capita + Population_mln + Thinness_ten_nineteen_years + 
+                                   Schooling + Economy_status_Developing, 
+               data = life_final, k = 10)
+linmod_cv
+```
+
+```{r function}
+library(nlme)
+library(caret)
+
+cv_lme <- function(formula, cluster, data, k = 10) {
+  set.seed(123)
+  folds <- createFolds(data[[all.vars(formula)[1]]], k = k, list = TRUE)
+  mse_values <- numeric(k)
+
+  for (i in 1:k) {
+    train_set <- data[-folds[[i]], ]
+    test_set <- data[folds[[i]], ]
+    
+    model <- lme(formula, random = as.formula(paste("~ 1 |", cluster)), data = train_set, na.action = na.omit)
+    predictions <- predict(model, newdata = test_set)
+    mse_values[i] <- mean((test_set[[all.vars(formula)[1]]] - predictions)^2)
+  }
+  return(mean(mse_values))
+}
+```
+
+```{r result}
+lme_cv <- cv_lme(
+  Life_expectancy ~ Year + Region + Alcohol_consumption + Hepatitis_B + Measles + BMI +
+    Polio + Incidents_HIV + GDP_per_capita + Population_mln +
+    Thinness_ten_nineteen_years + Schooling + Economy_status_Developing,
+  cluster = "Country",
+  data = life_final
+)
+lme_cv
+```
+
+```{r mert-cv-function}
+cv_mert <- function(data, response, fixed_effects, cluster, k = 10) {
+  set.seed(123)
+  folds <- createFolds(data[[response]], k = k, list = TRUE)
+  mse_values <- numeric(k)
+
+  for (i in 1:k) {
+    train <- data[-folds[[i]], ]
+    test  <- data[folds[[i]], ]
+
+    # Train MERT model on training data
+    result <- MERT(train, response, fixed_effects, cluster)
+
+    # Predict fixed effects from the trained tree on the test data
+    test$fixed_pred <- predict(result$tree_model, newdata = test)
+
+    # Predict random effects: match clusters in test to train
+    test$random_effect <- 0  # default
+    re <- ranef(result$lme_model)
+    test_clusters <- as.character(test[[cluster]])
+    re_vector <- re[test_clusters, "(Intercept)"]
+    test$random_effect[!is.na(re_vector)] <- re_vector[!is.na(re_vector)]
+
+    # Combine to get full prediction
+    pred <- test$fixed_pred + test$random_effect
+
+    # Compute MSE
+    mse_values[i] <- mean((test[[response]] - pred)^2)
+  }
+
+  return(mean(mse_values))
+}
+```
+
+```{r global}
+invisible(capture.output(
+  mert_cv_global <- cv_mert(
+    data = life_final,
+    response = "Life_expectancy",
+    fixed_effects = fixed_vars,
+    cluster = "Country"
+  )
+))
+```
+
+```{r}
+mert_cv_global
+```
+
+```{r merf-cv-function}
+cv_merf <- function(data, response, fixed_effects, cluster, k = 10, ntree = 100) {
+  set.seed(123)
+  folds <- createFolds(data[[response]], k = k, list = TRUE)
+  mse_values <- numeric(k)
+
+  for (i in 1:k) {
+    train <- data[-folds[[i]], ]
+    test <- data[folds[[i]], ]
+
+    result <- MERF(train, response, fixed_effects, cluster, ntree = ntree)
+
+    # Predict fixed effects from RF on test data
+    test$fixed_pred <- predict(result$rf_model, newdata = test[, fixed_effects])
+
+    # Predict random effects using test's cluster info
+    re <- ranef(result$lme_model)
+    test$random_effect <- re[as.character(test[[cluster]]), "(Intercept)"]
+    test$random_effect[is.na(test$random_effect)] <- 0  # handle unseen clusters
+
+    # Final prediction
+    pred <- test$fixed_pred + test$random_effect
+
+    mse_values[i] <- mean((test[[response]] - pred)^2)
+  }
+
+  return(mean(mse_values))
+}
+```
+
+```{r }
+invisible(capture.output(
+  merf_cv_global <- cv_merf(
+    data = life_final,
+    response = "Life_expectancy",
+    fixed_effects = fixed_vars,
+    cluster = "Country",
+    ntree = 100)
+  ))
+```
+
+```{r }
+merf_cv_global
+```
+
+## 4.2 On the SSA region dataset
+```{r ssa-dataset}
+## getting the SSA dataset
+SSA = life_final[life_final$Region == "Sub-Saharan Africa",]
+```
+
+```{r linmode-cv}
+linmod_cv_SSA <- cv_linear_model(Life_expectancy ~ Year + Alcohol_consumption + Hepatitis_B + Measles + BMI + Polio + Incidents_HIV + GDP_per_capita + Population_mln + Thinness_ten_nineteen_years + Schooling, 
+               data = SSA, k = 10)
+linmod_cv_SSA
+```
+
+```{r }
+lme_cv_SSA <- cv_lme(
+  Life_expectancy ~ Year + Alcohol_consumption + Hepatitis_B + Measles + BMI +
+    Polio + Incidents_HIV + GDP_per_capita + Population_mln +
+    Thinness_ten_nineteen_years + Schooling,
+  cluster = "Country",
+  data = SSA
+)
+lme_cv_SSA
+```
+
+```{r fixed-vars-no-region}
+fixed_vars_no_region <- c("Year", "Alcohol_consumption", "Hepatitis_B", "Measles", "BMI",
+                "Polio", "Incidents_HIV", "GDP_per_capita", "Population_mln",
+                "Thinness_ten_nineteen_years", "Schooling")
+```
+
+```{r}
+invisible(capture.output(mert_cv_SSA <- cv_mert(
+  data = SSA,
+  response = "Life_expectancy",
+  fixed_effects = fixed_vars_no_region,
+  cluster = "Country"
+)))
+```
+
+```{r}
+mert_cv_SSA
+```
+
+```{r }
+invisible(capture.output(
+  merf_cv_SSA <- cv_merf(
+  data = SSA,
+  response = "Life_expectancy",
+  fixed_effects = fixed_vars_no_region,
+  cluster = "Country",
+  ntree = 100
+)))
+```
+
+```{r }
+merf_cv_SSA
+```
+
+## 4.3 On the non-SSA region dataset
+```{r non-ssa-dataset}
+## getting the SSA dataset
+non_SSA = life_final[life_final$Region != "Sub-Saharan Africa",]
+```
+
+```{r linmod-cv}
+linmod_cv_non_SSA <- cv_linear_model(Life_expectancy ~ Year + Region + Alcohol_consumption + Hepatitis_B + Measles + BMI + Polio + Incidents_HIV + GDP_per_capita + Population_mln + Thinness_ten_nineteen_years + Schooling + Economy_status_Developing, 
+               data = non_SSA, k = 10)
+linmod_cv_non_SSA
+```
+
+```{r }
+lme_cv_non_SSA <- cv_lme(
+  Life_expectancy ~ Year + Region + Alcohol_consumption + Hepatitis_B + Measles + BMI +
+    Polio + Incidents_HIV + GDP_per_capita + Population_mln +
+    Thinness_ten_nineteen_years + Schooling + Economy_status_Developing,
+  cluster = "Country",
+  data = non_SSA
+)
+lme_cv_non_SSA
+```
+
+```{r }
+invisible(capture.output(mert_cv_non_SSA <- cv_mert(
+  data = non_SSA,
+  response = "Life_expectancy",
+  fixed_effects = fixed_vars,
+  cluster = "Country"
+)))
+```
+
+```{r }
+mert_cv_non_SSA
+```
+
+```{r }
+invisible(capture.output(merf_cv_non_SSA <- cv_merf(
+  data = non_SSA,
+  response = "Life_expectancy",
+  fixed_effects = fixed_vars,
+  cluster = "Country",
+  ntree = 100
+)))
+```
+
+```{r }
+merf_cv_non_SSA
+```
+
+```{r final-results-table}
+# Combine all the results into a data frame
+cv_results <- data.frame(
+  Model = c("MLR", "LME(intercept)", "MERT", "MERF"),
+  `Global Data` = c(
+    round(linmod_cv, 2),
+    round(lme_cv, 2),
+    round(mert_cv_global, 2),
+    round(merf_cv_global, 2)
+  ),
+  `SSA` = c(
+    round(linmod_cv_SSA, 2),
+    round(lme_cv_SSA, 2),
+    round(mert_cv_SSA, 2),
+    round(merf_cv_SSA, 2)
+  ),
+  `Non-SSA` = c(
+    round(linmod_cv_non_SSA, 2),
+    round(lme_cv_non_SSA, 2),
+    round(mert_cv_non_SSA, 2),
+    round(merf_cv_non_SSA, 2)
+  )
+)
+
+knitr::kable(cv_results, caption = "10-Fold Cross-Validation Scores for Each Model")
+```
+
+# 5. Interpretation
+## 5.1 Global Data
+```{r lme}
+lme_int <- lme(fixed = Life_expectancy ~ Year + Region + Alcohol_consumption + Hepatitis_B + Measles + BMI + Polio + Incidents_HIV + GDP_per_capita + Population_mln + Thinness_ten_nineteen_years + Schooling + Economy_status_Developing, 
+               random = ~ 1 | Country, 
+               data = life_final, na.action = na.omit)
+summary(lme_int)
+```
+
+```{r }
+# Extract RF model from MERF model fit previously 
+rf_merf <- merf_result$rf_model
+
+# Compute minimal depth distribution
+min_depth_merf <- min_depth_distribution(rf_merf)
+
+# Plot
+plot_min_depth_distribution(min_depth_merf, mean_sample = "all_trees") +
+  ggtitle("MERF - Distribution of Minimal Depth")
+```
+
+## 5.2 SSA region
+```{r }
+# fit LME to SSA
+lme_int_SSA <- lme(fixed = Life_expectancy ~ Year + Alcohol_consumption + Hepatitis_B + Measles + BMI + Polio + Incidents_HIV + GDP_per_capita + Population_mln + Thinness_ten_nineteen_years + Schooling, 
+               random = ~ 1 | Country, 
+               data = SSA, na.action = na.omit)
+summary(lme_int_SSA)
+```
+
+```{r }
+# fit MERF to SSA
+merf_result_SSA <- MERF(
+  data = SSA,
+  response = "Life_expectancy",
+  fixed_effects = fixed_vars_no_region,
+  cluster = "Country",
+  max_iter = 150,
+  ntree = 100
+)
+
+# SSA
+min_depth_ssa <- min_depth_distribution(merf_result_SSA$rf_model)
+plot_min_depth_distribution(min_depth_ssa, mean_sample = "all_trees") +
+  ggtitle("MERF - SSA: Distribution of Minimal Depth")
+```
+
+## 5.3 non-SSA region
+```{r }
+lme_int_non_SSA <- lme(fixed = Life_expectancy ~ Year + Region + Alcohol_consumption + Hepatitis_B + Measles + BMI + Polio + Incidents_HIV + GDP_per_capita + Population_mln + Thinness_ten_nineteen_years + Schooling + Economy_status_Developing, 
+               random = ~ 1 | Country, 
+               data = non_SSA, na.action = na.omit)
+summary(lme_int_non_SSA)
+```
+
+```{r }
+merf_result_non_SSA <- MERF(
+  data = non_SSA,
+  response = "Life_expectancy",
+  fixed_effects = fixed_vars,
+  cluster = "Country",
+  max_iter = 150,
+  ntree = 100
+)
+
+# non SSA
+min_depth_non_ssa <- min_depth_distribution(merf_result_non_SSA$rf_model)
+plot_min_depth_distribution(min_depth_non_ssa, mean_sample = "all_trees") +
+  ggtitle("MERF - non-SSA: Distribution of Minimal Depth")
+```
+
+
+The LME for non-SSA region significantly better - closer to MERF. 
+
+```{r speghtti-plot-ssa}
+length(unique(SSA$Country))
+xyplot(Life_expectancy ~ Year, groups = Country, data = SSA[order(SSA$Country, SSA$Year),], type = "l", main = "LE")
+```
+
+```{r speghtti-plot-non-ssa}
+length(unique(non_SSA$Country))
+xyplot(Life_expectancy ~ Year, groups = Country, data = non_SSA[order(non_SSA$Country, non_SSA$Year),], type = "l", main = "LE")
+```
+
+
+```{r}
+life_summary <- life_final %>%
+  group_by(Year) %>%
+  summarise(
+    avg_polio = mean(Polio, na.rm = TRUE),
+    avg_life = mean(Life_expectancy, na.rm = TRUE)
+  )
+
+ggplot(life_summary, aes(x = avg_polio, y = avg_life)) +
+  geom_line(color = "blue") +
+  geom_point() +
+  labs(title = "Average Life Expectancy vs. Average Polio Coverage Over Time",
+       x = "Average Polio Coverage",
+       y = "Average Life Expectancy") +
+  theme_minimal()
+```
+
+
+```{r}
+library(mgcv)
+gam_model <- gam(Life_expectancy ~ s(Polio), data = SSA)
+plot(gam_model, shade = TRUE, main = "Effect of Polio Coverage on Life Expectancy")
+```
+
+```{r}
+library(mgcv)
+gam_model <- gam(Life_expectancy ~ s(GDP_per_capita), data = SSA)
+plot(gam_model, shade = TRUE, main = "Effect of GDP on Life Expectancy")
+```
+
+```{r}
+library(mgcv)
+gam_model <- gam(Life_expectancy ~ s(Incidents_HIV), data = SSA)
+plot(gam_model, shade = TRUE, main = "GAM: Association of HIV Incidence with Life Expectancy")
+```
+
+```{r}
+library(mgcv)
+gam_model <- gam(Life_expectancy ~ s(Hepatitis_B), data = SSA)
+plot(gam_model, shade = TRUE, main = "GAM: Association of Hepatitis B Coverage with Life Expectancy")
+```
+
+
+
+
+
+
+
+
+
+
+
